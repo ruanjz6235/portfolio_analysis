@@ -273,4 +273,3 @@ class BaseProcess:
     def fit_index(cls, y, x):
         """fitting from index ret to fund ret, used in interpolation"""
         pass
-
