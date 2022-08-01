@@ -171,30 +171,105 @@ class ExampleSelect(BaseSelect):
 
 class BaseProcess:
     @classmethod
+    def model_data(cls,
+                   data,
+                   x_func=[(['000300'], lambda x: x-0.03/12, ['excess']),
+                           (['excess'], lambda x: x ** 2, ['excess_2']),
+                           (['excess'], lambda x: max(x, 0), ['excess_3'])],
+                   rf=0.03/12):
+        old = np.hstack(np.array(x_func)[:, 0])
+        ys = data.columns[~np.isin(data.columns, old)]
+
+        xs = np.hstack(np.array(x_func)[:, 2])
+        data['const'] = 1
+        data[xs] = np.nan
+        data[ys] = data[ys] - rf
+
+        dt = np.dtype({'names': data.columns, 'formats': ['O'] * len(data.columns)})
+        raw = np.array(data.values, dtype=dt)
+
+        for sub in x_func:
+            cols1, func, cols2 = sub[0], sub[1], sub[2]
+            assert len(set(cols1) - set(data.columns)) == 0
+            array = func(raw[cols1])
+            # array = np.apply_along_axis(func, 0, raw[cols1])
+            for k, col in enumerate(cols2):
+                raw[col] = array[k]
+
+        return raw[ys], raw[['const'] + list(xs)]
+
+    @classmethod
     def get_freq_calendar(cls, date, freq):
-        if freq.lower() == 'm':
+        if freq.lower() == 'w':
+            calendar = date[:4] + str(pd.to_datetime(date).isocalendar()[1])
+        elif freq.lower() == 'm':
             calendar = date[:6]
         elif freq.lower() == 'q':
             calendar = date[:4] + '0' + str((int(date[4:6]) -1) // 3 + 1)
         elif freq.lower() == 'y':
             calendar = date[:4]
         else:
-            raise KeyError('freq not in m, q, y')
+            raise KeyError('freq not in w, m, q, y')
         return calendar
 
     @classmethod
-    def rolling_model(cls, func, df, freq='Q', window=24, lst=[], cal_type=0, **kwargs):
-        if len(lst) == 0:
-            lst = df.columns[~np.isin(df.columns, ['date'])]
-        df = df.resample(freq, on=['date']).last().reset_index()
-        df['calendar'] = df['date'].apply(cls.get_freq_calendar, freq=freq)
+    def interpolation(cls, df, method={'method': 'linear'}, **kwargs):
+        # interpolate
+        try:
+            df = df.interpolate(**method)
+        except KeyError:
+            df = method['method'](df, **kwargs)
+        return df
+
+    @classmethod
+    def rolling_window(cls, array, window):
+        shape = array.shape[:-1] + (array.shape[-1] - window + 1, window)
+        strides = array.strides + (array.strides[-1],)
+        return np.lib.stride_tricks.as_strided(array, shape=shape, strides=strides)
+
+    @classmethod
+    def rolling_model(cls,
+                      func,
+                      df,
+                      x_funcs=[[(['000300'], lambda x: x-0.03/12, ['excess']),
+                                (['excess'], lambda x: x ** 2, ['excess_2']),
+                                (['excess'], lambda x: max(x, 0), ['excess_3'])]],
+                      freq='Q',
+                      window=24,
+                      dt_type='ret',
+                      cal_type=0):
+        """
+        data is price_type, index is 'date'-like, and df is a pivot table
+        """
+        # resample
+        df = df.resample(freq).last()
+
+        # price_type or ret_type
+        if dt_type == 'ret':
+            df = df / df.shift(1) - 1
+        calendars = df.index.map(cls.get_freq_calendar, freq=freq)
         params = []
-        if cal_type == 1:
-            for i, calendar in emumerate(df['calendar'].tolist()):
-                sub_df = df[lst].iloc[i: i + window]
-                param = func(sub_df, **kwargs)
-                params.append([calendar] + param)
-            params = pd.DataFrame(params)
+
+        # rolling_model
+        if type(x_funcs[0]) == tuple:
+            x_funcs = [x_funcs]
         else:
-            params = df.rolling(window).apply(func, **kwargs)
-        return params
+            assert type(x_funcs[0]) == list
+
+        for x_func in x_funcs:
+            y, x = cls.model_data(df, x_func)
+            if cal_type == 1:
+                for i, calendar in emumerate(calendars.tolist()):
+                    sub_y = y[i: i + window]
+                    sub_x = x[i: i + window]
+                    param = func(sub_y, sub_x)
+                    params.append([calendar] + param)
+            else:
+                df_window = cls.rolling_window(pd.DataFrame(df).values, window)
+                params = np.apply_along_axis(func, 1, df_window)
+        return pd.DataFrame(params)
+
+    @classmethod
+    def fit_index(cls, y, x):
+        """fitting from index ret to fund ret, used in interpolation"""
+        pass

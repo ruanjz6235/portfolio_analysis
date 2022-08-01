@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
-from config import ConfData
-from util import BaseSelect
+
+from .config import ConfData
+from .util import BaseSelect
 
 
 def get_tradingdays(start_date, end_date):
@@ -23,6 +24,7 @@ class RetSelect(BaseSelect):
     kc_ret = """select * from kc_ret_table"""
     h_ret = """select * from h_ret_table"""
     index_ret = """"""
+    fund_ret = """"""
 
 
 class PortSelect(BaseSelect):
@@ -30,3 +32,7 @@ class PortSelect(BaseSelect):
     daily_port = """select fund, date, code, weight, style from fund_portfolio where date = '{date}'"""
     daily_base = """select fund, date, code, weight, style from base_portfolio where date = '{date}'"""
     base_attr = """select code, date, code, weight, style from base_portfolio where date = '{date}'"""
+
+
+class InfoSelect(BaseSelect):
+    fund_codes = """"""

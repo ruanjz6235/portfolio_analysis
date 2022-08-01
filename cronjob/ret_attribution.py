@@ -27,7 +27,7 @@ def get_fund_base_data(ret_attr_fund, style_fund, save_brinson=True):
                                   dates=sub_dates).set_index(['date', 'fund']).unstack().loc[dates_new]
     ret_base.index = ret_fund.index.copy()
     if save_brinson:
-        brinson_use(ret_fund, style_fund, ret_base, style_base, False)
+        brinson_use(ret_fund, style_fund, ret_base, style_base, if_cross=False)
     else:
         return ret_fund, style_fund, ret_base, style_base
 

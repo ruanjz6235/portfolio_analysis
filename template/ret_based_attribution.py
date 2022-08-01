@@ -1,34 +1,35 @@
 import pandas as pd
 import numpy as np
+import scipy
 
+from ..config import ConfData
 from ..data_transform import DataTransform
 from ..util import (BaseSelect,
                     BaseProcess)
 
 
-def tm_hm_model(fund_and_index_return_by_window, rf=0.03 / 12):
-    y = fund_and_index_return_by_window['MonthlyReturn'] - rf
-    fund_and_index_return_by_window['bench_rf'] = fund_and_index_return_by_window['log_return'] - rf
-    fund_and_index_return_by_window['bench_rf_2'] = fund_and_index_return_by_window['bench_rf'] ** 2
-    fund_and_index_return_by_window['bench_rf_3'] = fund_and_index_return_by_window['bench_rf'].apply(
-        lambda bench_rf: max(bench_rf, 0))
+class RegressProcess(BaseProcess):
+    @classmethod
+    def linear_reg(cls, y, x):
+        """
+        raw.columns: ['fund', 'date', 'ret', '000300']
+        x_funcs: [[('000300', lambda x: x-0.03/12, 'excess'), ('excess', lambda x: x ** 2, 'excess_2')]]
+        """
+        xs = []
+        model = sm.OLS(y, x).fit()
+        xs.append(model.params)
+        xs.append(model.pvalues)
+        xs.append(model.tvalues)
+        xs.append([model.rsquared] * len(xs))
+        return np.array(xs)
 
-    x_tm = fund_and_index_return_by_window[['bench_rf', 'bench_rf_2']]
-    x_tm = sm.add_constant(x_tm)
-    model_tm = sm.OLS(y, x_tm).fit()
-    [alpha_tm, beta1_tm, beta2_tm] = model_tm.params
-    [p1_tm, p2_tm, p3_tm] = model_tm.pvalues
-    [t1_tm, t2_tm, t3_tm] = model_tm.tvalues
-    r2_tm = model_tm.rsquared
-    params1 = [alpha_tm, p1_tm, t1_tm, beta1_tm, p2_tm, t2_tm, beta2_tm, p3_tm, t3_tm, r2_tm]
-
-    x_hm = fund_and_index_return_by_window[['bench_rf', 'bench_rf_3']]
-    x_hm = sm.add_constant(x_hm)
-    model_hm = sm.OLS(y, x_hm).fit()
-    [alpha_hm, beta1_hm, beta2_hm] = model_hm.params
-    [p1_hm, p2_hm, p3_hm] = model_hm.pvalues
-    [t1_hm, t2_hm, t3_hm] = model_hm.tvalues
-    r2_hm = model_hm.rsquared
-    params2 = [alpha_hm, p1_hm, t1_hm, beta1_hm, p2_hm, t2_hm, beta2_hm, p3_hm, t3_hm, r2_hm]
-    params = params1 + params2
-    return params
+    @classmethod
+    def tm_hm_model(cls, df, method='linear', **kwargs):
+        func, freq, window, dt_type, cal_type = cls.linear_reg, 'm', 12, 'ret', 0
+        x_funcs = [[([index], lambda x: x-0.03/12, 'tm_excess'),
+                    (['tm_excess'], lambda y: np.apply_along_axis(lambda x: x ** 2, 0, y), 'tm_excess2')],
+                   [([index], lambda x: x-0.03/12, 'hm_excess'),
+                    (['tm_excess'], lambda y: np.apply_along_axis(lambda x: max(x, 0), 0, y), 'hm_excess2')]]
+        df = cls.interpolation(df, method=method, **kwargs)
+        params = cls.rolling_model(func, df, x_funcs, freq, window, dt_type, cal_type)
+        ConfData.save(params, 'zhijunfund.tm_hm_model')

@@ -140,4 +140,4 @@ def cal_brinson_attr_data(dates):
             else:
                 weight = style_data1.sum(axis=1)
 
-            brinson_use(mean_price_data2, style_data2.mul(weight, axis=0), mean_price_data1, style_data1, True)
+            brinson_use(mean_price_data2, style_data2.mul(weight, axis=0), mean_price_data1, style_data1, if_cross=True)
