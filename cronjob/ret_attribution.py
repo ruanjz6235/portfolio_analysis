@@ -3,7 +3,7 @@ import numpy as np
 from functools import reduce
 
 from ..util import BaseSelect
-from ..query import RetSelect
+from ..query import RetSelect, PortSelect
 
 from ..engine.ret_attribution import (cal_ret_attr_data,
                                       cal_barra_attr_data,
@@ -27,7 +27,14 @@ def get_fund_base_data(ret_attr_fund, style_fund, save_brinson=True):
                                   dates=sub_dates).set_index(['date', 'fund']).unstack().loc[dates_new]
     ret_base.index = ret_fund.index.copy()
     if save_brinson:
-        brinson_use(ret_fund, style_fund, ret_base, style_base, if_cross=False)
+        exces, alloc, selct = brinson_use(ret_fund,
+                                          style_fund,
+                                          ret_base,
+                                          style_base,
+                                          if_cross=False)
+        ConfData.save(exces, 'zhijunfund.brinson_attr')
+        ConfData.save(alloc, 'zhijunfund.brinson_attr')
+        ConfData.save(selct, 'zhijunfund.brinson_attr')
     else:
         return ret_fund, style_fund, ret_base, style_base
 
@@ -42,46 +49,62 @@ dates = np.vstack([dates[: len(dates) - y].reshape(x, 30), dates[len(dates) - y:
 # cronjob
 # %%
 # CALCULATE ATTRIBUTION AND HOLDING
-# 1. asset_attribution
+# 1. asset_attribution, first_layer of method of brinson based on position (two layers)
 def get_asset_attr():
+    query_name = 'daily_port'
     style = 'asset'
     cols = {'股票': 'stock_', '债券': 'bond_', '基金': 'fund_', '理财': 'fipro_', '衍生品': 'derive_'}
     for sub_dates in dates:
-        ret_attr_fund, style_fund, _ = cal_ret_attr_data(style=style,
-                                                         cols=cols,
-                                                         dates=sub_dates,
-                                                         query_name='daily_port')
+        portfolio = BaseSelect.get_data(query_name=getattr(PortSelect, query_name), schema='edw', dates=dates)
+        ret_attr_fund, style_fund, ret_attr_data_new, style_data_new, _ = cal_ret_attr_data(style=style,
+                                                                                            cols=cols,
+                                                                                            dates=sub_dates,
+                                                                                            portfolio=portfolio)
+        ConfData.save(ret_attr_data_new, 'zhijunfund.fund_ret_attr')
+        ConfData.save(style_data_new, 'zhijunfund.fund_style')
         get_fund_base_data(ret_attr_fund, style_fund, save_brinson=True)
 
 
 # 2. stock_ind_attribution
 def get_stock_attr():
+    query_name = 'daily_stock_port'
     style = 'ind'
     cols = {}
     for sub_dates in dates:
-        cal_ret_attr_data(style=style,
-                          cols=cols,
-                          dates=sub_dates,
-                          query_name='daily_stock_port',
-                          standard=[38, 22, 28])
+        portfolio = BaseSelect.get_data(query_name=getattr(PortSelect, query_name), schema='edw', dates=dates)
+        _, _, ret_attr_data_new, style_data_new, _ = cal_ret_attr_data(style=style,
+                                                                       cols=cols,
+                                                                       dates=sub_dates,
+                                                                       portfolio=portfolio,
+                                                                       standard=[38, 22, 28])
+        ConfData.save(ret_attr_data_new, 'zhijunfund.fund_ret_attr')
+        ConfData.save(style_data_new, 'zhijunfund.fund_style')
 
 
 # 3. bond_attribution
 def get_bond_attr():
+    query_name = 'daily_bond_port'
     style = 'bond'
     for sub_dates in dates:
-        cal_ret_attr_data(style=style,
-                          dates=sub_dates,
-                          query_name='daily_bond_port')
+        portfolio = BaseSelect.get_data(query_name=getattr(PortSelect, query_name), schema='edw', dates=dates)
+        _, _, ret_attr_data_new, style_data_new, _ = cal_ret_attr_data(style=style,
+                                                                       dates=sub_dates,
+                                                                       portfolio=portfolio)
+        ConfData.save(ret_attr_data_new, 'zhijunfund.fund_ret_attr')
+        ConfData.save(style_data_new, 'zhijunfund.fund_style')
 
 
 # 4. future_attribution
 def get_future_attr():
+    query_name = 'daily_future_port'
     style = 'future'
     for sub_dates in dates:
-        cal_ret_attr_data(style=style,
-                          dates=sub_dates,
-                          query_name='daily_future_port')
+        portfolio = BaseSelect.get_data(query_name=getattr(PortSelect, query_name), schema='edw', dates=dates)
+        _, _, ret_attr_data_new, style_data_new, _ = cal_ret_attr_data(style=style,
+                                                                       dates=sub_dates,
+                                                                       portfolio=portfolio)
+        ConfData.save(ret_attr_data_new, 'zhijunfund.fund_ret_attr')
+        ConfData.save(style_data_new, 'zhijunfund.fund_style')
 
 
 # 5. barra_attribution
@@ -104,4 +127,10 @@ def get_barra_attr():
 # (2) based on position (two level)
 def get_brinson_attr():
     for sub_dates in dates:
-        cal_brinson_attr_data(dates=sub_dates)
+        fund_port = BaseSelect.get_data(query_name=PortSelect.daily_port, schema='edw', dates=dates)
+        base_port = BaseSelect.get_data(query_name=PortSelect.daily_base, schema='edw', dates=dates, base='000300')
+        exces, alloc, selct, cross = cal_brinson_attr_data(fund_port, base_port, dates=sub_dates)
+        ConfData.save(exces, 'zhijunfund.brinson_attr')
+        ConfData.save(alloc, 'zhijunfund.brinson_attr')
+        ConfData.save(selct, 'zhijunfund.brinson_attr')
+        ConfData.save(cross, 'zhijunfund.brinson_attr')

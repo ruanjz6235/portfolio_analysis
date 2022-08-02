@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from functools import reduce
 
-from config import ConfData
+from .config import ConfData
 
 
 def time_decorator(func):

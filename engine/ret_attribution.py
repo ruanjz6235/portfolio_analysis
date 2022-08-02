@@ -11,7 +11,7 @@ from ..template.ret_attribution import RetAttr
 # %%
 # #############code specifications of portfolio_analysis and return attribution
 # An example of single-period portfolio analysis and return attribution standard
-def cal_ret_attr_data(dates, style, query_name, **kwargs):
+def cal_ret_attr_data(dates, style, portfolio, **kwargs):
     """
     1. get holding data
     2. generate ret_attr instance
@@ -22,7 +22,6 @@ def cal_ret_attr_data(dates, style, query_name, **kwargs):
     7. save data
     8. when use return attribution data, get single-period data and calculate multi-period data
     """
-    portfolio = PortSelect.get_data(query_name=getattr(PortSelect, query_name), schema='edw', dates=dates)
     ret_attr = RetAttr(portfolio)
     ret_attr.fill_portfolio()
     ret_attr.get_stock_ret(dates=dates)
@@ -32,9 +31,7 @@ def cal_ret_attr_data(dates, style, query_name, **kwargs):
     ret_attr_data_new = ret_attr_data.stack().reset_index()
     style_data = ret_attr.portfolio.groupby(['fund', 'date']).apply(ret_attr.get_daily_style)
     style_data_new = style_data.stack().reset_index()
-    ConfData.save(ret_attr_data_new, 'zhijunfund.fund_ret_attr')
-    ConfData.save(style_data_new, 'zhijunfund.fund_style')
-    return ret_attr_data, style_data, ret_attr_data2
+    return ret_attr_data, style_data, ret_attr_data_new, style_data_new, ret_attr_data2
 
 
 def cal_barra_attr_data(dates):
@@ -92,17 +89,13 @@ def brinson_use(ret_fund, style_fund, ret_base, style_base, if_cross=True):
         cross = (fund_data + base_data) - (slct_data + allc_data)
     else:
         selct = fund_data - allc_data
-    ConfData.save(exces, 'zhijunfund.brinson_attr')
-    ConfData.save(alloc, 'zhijunfund.brinson_attr')
-    ConfData.save(selct, 'zhijunfund.brinson_attr')
     if if_cross:
-        ConfData.save(cross, 'zhijunfund.brinson_attr')
+        return exces, alloc, selct, cross
+    else:
+        return exces, alloc, selct
 
 
-def cal_brinson_attr_data(dates):
-    fund_port = PortSelect.get_data(query_name=PortSelect.daily_port, schema='edw', dates=dates)
-    base_port = PortSelect.get_data(query_name=PortSelect.daily_base, schema='edw', dates=dates, base='000300')
-
+def cal_brinson_attr_data(fund_port, base_port, dates):
     ret_attr_fund = RetAttr(fund_port)
     ret_attr_fund.fill_portfolio()
     ret_attr_base = RetAttr(base_port)
@@ -134,10 +127,17 @@ def cal_brinson_attr_data(dates):
         # consider two models: brinson based allocation and brinson based position
         # 1. brinson based allocation (one level)
         # 2. brinson based position (two level)
+        if_cross = True
         for i in ['brinson_a', 'brinson_p']:
             if i == 'brinson_a':
                 weight = pd.Series([1] * len(style_data1), index=style_data1.index)
             else:
                 weight = style_data1.sum(axis=1)
 
-            brinson_use(mean_price_data2, style_data2.mul(weight, axis=0), mean_price_data1, style_data1, if_cross=True)
+            exces, alloc, selct, cross = brinson_use(mean_price_data2,
+                                                     style_data2.mul(weight, axis=0),
+                                                     mean_price_data1,
+                                                     style_data1,
+                                                     if_cross)
+
+            return exces, alloc, selct, cross

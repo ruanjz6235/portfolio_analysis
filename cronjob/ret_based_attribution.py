@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 
+from ..config import ConfData
 from ..util import BaseSelect, BaseProcess
 from ..query import RetSelect, InfoSelect
 
@@ -19,10 +20,11 @@ codes = BaseSelect.get_data(InfoSelect.fund_codes, schema='zhijunfund')['fund'].
 def get_tm_hm_data():
     batch = 500
     a, b = codes // batch, codes % batch
-    if b == 0:
-        batch_codes = codes[: -b].reshape(batch, a)
-    else:
-        batch_codes = np.vstack([codes[: -b].reshape(batch, a), codes[-b:]])
+    batch_codes = np.vstack([codes[: len(codes) - b].reshape(batch, a), codes[len(codes) - b:]])
     for sub_codes in batch_codes:
-        get_rolling_tm_hm(sub_codes, index_data)
+        fund_data = BaseSelect.get_data(RetSelect.fund_ret,
+                                        schema='zhijunfund',
+                                        codes=sub_codes).set_index(['date', 'fund']).unstack()
+        params = get_rolling_tm_hm(fund_data, index_data)
+        ConfData.save(params, 'zhijunfund.tm_hm_model')
 
