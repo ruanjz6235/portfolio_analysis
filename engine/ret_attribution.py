@@ -2,16 +2,17 @@ import pandas as pd
 from functools import reduce
 
 from ..config import ConfData
+from ..const import style_type
 from ..util import BaseSelect
 from ..query import PortSelect
 
-from ..template.ret_attribution import RetAttr
+from ..template.ret_attribution import RetAttr, RetAttr2
 
 
 # %%
 # #############code specifications of portfolio_analysis and return attribution
 # An example of single-period portfolio analysis and return attribution standard
-def cal_ret_attr_data(dates, style, portfolio, **kwargs):
+def cal_ret_attr_data(dates, style, portfolio, asset_ret=None, **kwargs):
     """
     1. get holding data
     2. generate ret_attr instance
@@ -24,14 +25,15 @@ def cal_ret_attr_data(dates, style, portfolio, **kwargs):
     """
     ret_attr = RetAttr(portfolio)
     ret_attr.fill_portfolio()
-    ret_attr.get_stock_ret(dates=dates)
+    asset = style_type[style]
+    ret_attr.get_stock_ret(dates=dates, asset=asset, asset_ret=asset_ret)
     ret_attr.get_style(style, **kwargs)
-    ret_attr_data = ret_attr.portfolio.groupby(['fund', 'date']).apply(ret_attr.get_daily_attr)
-    ret_attr_data2 = ret_attr.get_cum_attr(ret_attr_data, lst=ret_attr.style_list)
-    ret_attr_data_new = ret_attr_data.stack().reset_index()
-    style_data = ret_attr.portfolio.groupby(['fund', 'date']).apply(ret_attr.get_daily_style)
-    style_data_new = style_data.stack().reset_index()
-    return ret_attr_data, style_data, ret_attr_data_new, style_data_new, ret_attr_data2
+    ret_attr_data, style_data, style_allocation = ret_attr.get_daily_attr(ret_attr.portfolio, ret_attr.style_list)
+
+    return (ret_attr_data,
+            style_data,
+            style_allocation,
+            getattr(ret_attr, f'{asset}_ret'))
 
 
 def cal_barra_attr_data(dates):
@@ -54,7 +56,7 @@ def cal_barra_attr_data(dates):
     for i, port_ in enumerate([port, fund_port, base_port, active_port[columns]]):
         ret_attr = RetAttr(port_)
         ret_attr.fill_portfolio()
-        ret_attr.get_stock_ret(dates=dates)
+        ret_attr.get_stock_ret(dates=dates, asset='stock')
         if i == 0:
             ret_attr_data = ret_attr.portfolio.groupby(['fund', 'date']).apply(ret_attr.get_daily_attr, lst=asset)
             ret_attr_data = ret_attr_data.stack().reset_index()
@@ -109,7 +111,7 @@ def cal_brinson_attr_data(fund_port, base_port, dates):
         else:
             idx = 28
 
-        ret_attr_fund.get_stock_ret(dates=dates)
+        ret_attr_fund.get_stock_ret(dates=dates, asset='stock')
         ret_attr_fund.get_style('ind', standard=idx)
         ret_attr_data1 = ret_attr_fund.portfolio.groupby(['fund', 'date']).apply(ret_attr_fund.get_daily_attr)
         style_data1 = ret_attr_fund.portfolio.groupby(['fund', 'date']).apply(ret_attr_fund.get_daily_style)
@@ -118,7 +120,7 @@ def cal_brinson_attr_data(fund_port, base_port, dates):
         ret_attr_base.ind_style_data = ret_attr_fund.ind_style_data.copy()
         ret_attr_base.stock_ret = ret_attr_fund.stock_ret.copy()
 
-        ret_attr_base.get_stock_ret(dates=dates)
+        ret_attr_base.get_stock_ret(dates=dates, asset='stock')
         ret_attr_base.get_style('ind', standard=idx)
         ret_attr_data2 = ret_attr_base.portfolio.groupby(['fund', 'date']).apply(ret_attr_base.get_daily_attr)
         style_data2 = ret_attr_base.portfolio.groupby(['fund', 'date']).apply(ret_attr_base.get_daily_style)
@@ -141,3 +143,36 @@ def cal_brinson_attr_data(fund_port, base_port, dates):
                                                      if_cross)
 
             return exces, alloc, selct, cross
+
+
+# %%
+# #############code specifications of style_analysis
+# An example of single-period style_analysis
+def cal_ts_style(portfolio, style_list, **kwargs):
+    ret_attr = RetAttr2(portfolio)
+    ports = []
+    for i, style in enumerate(style_list):
+        if not (style.startswith('stock') and style.startswith('bond') and style.startswith('future')):
+            asset = style.split('_')[0]
+            if asset == style_list[i - 1].split('_')[0]:
+                port = ret_attr.get_daily_style_port(asset, **kwargs)
+                ret_attr.portfolio = port.copy()
+        style_port = ret_attr.get_daily_style_port(style)
+        ports.append(style_port)
+    ports = pd.concat(ports)
+    return ports
+
+
+def cal_interval_port_style(portfolio, style_list, job_type=None, **kwargs):
+    ret_attr = RetAttr2(portfolio)
+    ports = []
+    for style in style_list:
+        if style.split('_')[2] == 'days':
+            if style.split('_')[1] != 'all':
+                continue
+        else:
+            if style.split('_')[1] == 'all':
+                continue
+        ret_attr.get_interval_style_port(style, job_type=job_type, **kwargs)
+        ports.append(ret_attr.style_portfolio)
+    return pd.concat(ports)

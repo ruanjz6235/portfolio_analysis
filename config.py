@@ -10,19 +10,25 @@ warnings.filterwarnings('ignore')
 
 class ConfData:
     config = {'zhijunfund': {'host': '10.56.36.145', 'port': 3306, 'user': 'zhijunfund', 'passwd': 'zsfdcd82sf2dmd6a', 'database': 'zhijunfund'},
+              'funddata': {'host': 'localdev.zhijuninvest.com', 'port': 3306, 'user': 'devuser', 'passwd':'hcy6YJF123', 'database': 'funddata'},
               'zdj': ('zdj', 'xtKFE8k3ctqbYDOz', '10.55.57.53:1521/fundrate'),
               'jydb': ('jydb', 'xtKFE8k3ctqbYDOz', '10.55.57.53:1521/fundrate'),
               'edw': {'host': '10.52.40.222', 'port': 21050, 'username': 'fundrating', 'password': '6B2O02sP1OhYoLlX12OR',
-                        'database': 'edw', 'auth': 'LDAP'},
+                      'database': 'edw', 'auth': 'LDAP'},
               'bizdm': {'host': '10.52.40.222', 'port': 21050, 'username': 'fundrating', 'password': '6B2O02sP1OhYoLlX12OR',
-                        'database': 'bizdm', 'auth': 'LDAP'}}
+                        'database': 'bizdm', 'auth': 'LDAP'},
+              'simuwang': {'host': '120.24.90.158', 'port': 3306, 'user': 'data_user_zheshangzq', 'passwd': 'zszq@2022', 'database': 'rz_hfdb_core'}}
 
     @classmethod
     def get_conn(cls, schema):
         if schema == 'zhijunfund':
             conn = pymysql.connect(**(cls.config['zhijunfund']))
-        elif schema == 'oracle':
-            conn = cx.connect(*(cls.config['oracle']))
+        elif schema == 'simuwang':
+            conn = pymysql.connect(**(cls.config['simuwang']))
+        elif schema == 'funddata':
+            conn = pymysql.connect(**(cls.config['funddata']))
+        elif schema == 'zdj':
+            conn = cx.connect(*(cls.config['zdj']))
         elif schema == 'bizdm':
             conn = hive.Connection(**(cls.config['bizdm']))
         elif schema == 'edw':

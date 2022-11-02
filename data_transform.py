@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from .const import nc
 
 
 class DataTransform:
@@ -24,13 +25,13 @@ class DataTransform:
 
     def get_dummy(self, columns=None):
         if not columns:
-            columns = self.df['style'].drop_duplicates().tolist()
+            columns = self.df[nc.style_name].drop_duplicates().tolist()
             columns = dict(zip(columns, columns))
         if self.df.empty:
-            return pd.DataFrame(columns=['code'] + list(dict(columns).values()))
-        self.df['style'] = self.df['style'].apply(lambda x: dict(columns)[x])
-        df_ = pd.get_dummies(self.df['style'])
-        self.df = pd.concat([self.df.drop('style', axis=1), df_], axis=1)
+            return pd.DataFrame(columns=[nc.code_name] + list(dict(columns).values()))
+        self.df[nc.style_name] = self.df[nc.style_name].apply(lambda x: dict(columns)[x])
+        df_ = pd.get_dummies(self.df[nc.style_name])
+        self.df = pd.concat([self.df.drop(nc.style_name, axis=1), df_], axis=1)
         return self
 
     def rename(self, columns):

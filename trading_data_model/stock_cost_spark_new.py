@@ -1,19 +1,19 @@
 # -*- conding: UTF-8 -*-
+import pyspark.sql.functions as f
+from pyspark.sql import SparkSession, Row, Window
+from pyspark import SparkContext, SparkConf
+from pyspark.sql.functions import lag, isnan, sum, avg, lit, max, when, col, exp, udf, concat, pandas_udf, PandasUDFType
+from pyspark.sql.types import StringType, IntegerType, StructType, StructField, DateType, DoubleType
+from pyspark.sql import DataFrame
 from functools import reduce
 from time import time
-from glob import glob
-import warnings
-import logging
-warnings.filterwarnings('ignore')
-logging.basicConfig(level=logging.INFO)
-
 import numpy as np
 import pandas as pd
+import warnings
+from glob import glob
+import feather
 
-from pyspark import SparkContext, SparkConf
-from pyspark.sql import SparkSession, Row, Window, DataFrame
-from pyspark.sql.functions import lag, sum, avg, lit, max, col, concat, pandas_udf, PandasUDFType
-from pyspark.sql.types import StringType, IntegerType, StructType, StructField, DateType, DoubleType
+warnings.filterwarnings('ignore')
 sparkconf = SparkConf().setAppName('test1').setMaster('local[*]').set('spark.ui.showConsoleProgress', 'false')
 sc = SparkContext(conf=sparkconf)
 spark = SparkSession.builder.config(conf=sparkconf).getOrCreate()
@@ -85,7 +85,8 @@ class ConfData:
                  'hg': 'bonus_share_trd_prft', 'gx': 'dividend_trd_prft', 'pt_realize': 'bs_hld_prft',
                  'dx_realize': 'newsec_hld_prft', 'pg_realize': 'quota_hld_prft', 'hg_realize': 'bonus_share_hld_prft',
                  'duration': 'hld_term', 'turnover': 'mtch_amt', 'buy_turn': 'buy_mtch_amt',
-                 'sell_turn': 'sell_mtch_amt', 'rn_turnover': 'dayin_mtch_amt', 'frn_turnover': 'undayin_mtch_amt'}
+                 'sell_turn': 'sell_mtch_amt',
+                 'rn_turnover': 'dayin_mtch_amt', 'frn_turnover': 'undayin_mtch_amt'}
 
     def get_days_data(self, dates, query, schema, **kwargs):
         days_data = []
@@ -124,7 +125,8 @@ class ConfData:
 
     def get_dates(self, **kwargs):
         last_date = kwargs.get('last_date')
-        target, source = kwargs.get('target', 'edw.T_CUST_D_STK_TRD_IDX'), kwargs.get('source', 'edw.T_EVT_SEC_DLV_JOUR')
+        target, source = kwargs.get('target', 'edw.T_CUST_D_STK_TRD_IDX'), kwargs.get('source',
+                                                                                      'edw.T_EVT_SEC_DLV_JOUR')
         date_name = kwargs.get('dt', 'biz_dt')
         tar_dt, sou_dt = kwargs.get('tar_dt', date_name), kwargs.get('sou_dt', date_name)
         if not last_date:
@@ -138,21 +140,23 @@ class ConfData:
         if kwargs.get('if_source', None):
             query = """select distinct {} from {} where {} >= {} order by {} asc""".format(
                 sou_dt, source, sou_dt, last_date, sou_dt)
+            print(query)
             dates = spark.sql(query).toPandas()[sou_dt].astype('int').tolist()
         else:
             dates = [int(x.strftime('%Y%m%d')) for x in pd.date_range(last_date, pd.to_datetime('today').normalize())]
         return dates
 
 
-# def get_column_idx(df, column_name, func):
-#     df_ = df.select(func(*(df[cn] for cn in column_name)))
-#     num = df_.collect()[0][df_.columns[0]]
-#     return num
+def get_column_idx(df, column_name, func):
+    df_ = df.select(func(*(df[cn] for cn in column_name)))
+    num = df_.collect()[0][df_.columns[0]]
+    return num
 
 
 class BaseStockCost(object):
-    """basic func"""
-
+    """
+    basic func
+    """
     def __init__(self):
         dict_ = {k: v for k, v in NameConst.__dict__.items() if k.find('name') >= 0 or k.find('nm') >= 0}
         self.__dict__.update(dict_)
@@ -203,7 +207,7 @@ class BaseStockCost(object):
         return df['type'] == 2
 
     cols = ['fund', 'code', 'flag', 'hold_type', 'date', 'time', 'price', 'volume', 'close', 'preclose', 'type']
-    cols = [getattr(nc, x + '_name') for x in cols]
+    cols = [getattr(nc, x+'_name') for x in cols]
     schema_out = StructType([SCHEMA[i] for i in cols])
 
     def deal_factor(self, day_amount, day_trading, cond1, cond2, cond3):
@@ -370,6 +374,7 @@ class StockCost(BaseStockCost):
         volume_minus = self.volume_minus(day_amount)
         volume_zero = self.volume_zero(day_amount)
         volume_all = self.volume_all(day_amount)
+        print('extract_rn: ', day_trading.columns)
         one_deal = self.deal_factor(day_amount, day_trading, count1, volume_all, 'one')
         two_deal_buy = self.deal_factor(day_amount, day_trading, ~count1, volume_plus, 'buy')
         two_deal_sell = self.deal_factor(day_amount, day_trading, ~count1, volume_minus, 'sell')
@@ -429,6 +434,7 @@ class StockCost(BaseStockCost):
         volume_zero = self.volume_zero(dx_agg)
         volume_all = self.volume_all(dx_agg)
 
+        print(f'extract_{deal}: ', dx_data.columns)
         one_deal = self.deal_factor(dx_agg, dx_data, count1, volume_all, 'one')
         two_deal_buy = self.deal_factor(dx_agg, dx_data.drop('type'), ~count1, volume_plus, 'buy')
         two_deal_sell = self.deal_factor(dx_agg, dx_data.drop('type'), ~count1, volume_minus, 'sell')
@@ -472,6 +478,7 @@ class StockCost(BaseStockCost):
         volume_zero = self.volume_zero(hold_agg)
         volume_all = self.volume_all(hold_agg)
 
+        print('extract_pt: ', today_holding.columns)
         one_deal = self.deal_factor(hold_agg, today_holding, count1, volume_all, 'one')
         two_deal_buy = self.deal_factor(hold_agg, today_holding, ~count1, volume_plus, 'buy')
         two_deal_sell = self.deal_factor(hold_agg, today_holding, ~count1, volume_minus, 'sell')
@@ -549,68 +556,78 @@ class StockCost(BaseStockCost):
         return turnover
 
     def deal_decompose(self, date):
+        print('calculate')
         day_deal = self.trading.join(self.stock_close, on=[self.date_name, self.code_name], how='outer')
-        # 股息
         gx_ret, day_deal = self.update_gx_data(day_deal)
-        # 日内交易
         rn_ret, day_trading = self.update_rn_data(day_deal)
-        # 打新交易
         dx_ret, day_trading = self.update_dx_data(day_trading, 'dx')
-        # 红股交易
         hg_ret, day_trading = self.update_dx_data(day_trading, 'hg')
-        # 配股交易
         pg_ret, day_trading = self.update_dx_data(day_trading, 'pg')
-        # 权证交易
         qz_ret, day_trading = self.update_dx_data(day_trading, 'qz')
-        # 新增打新、红股、配股、权证
         trading_assert1 = self.update_trading_assert1(day_deal)
-        # 已实现普通买卖交易
         pt_ret = self.update_trading_assert2(day_trading, date)
-        # 未实现收益计算及持仓信息计算
         realize_return, holding = self.update_realize_return(trading_assert1, day_close, date)
         realized_return = reduce(DataFrame.unionAll, [gx_ret, rn_ret, dx_ret, pg_ret, qz_ret, pt_ret, hg_ret])
-        # TODO: 更多指标在这里开发
         turnover = self.get_turnover(gx_ret, day_deal, trading_assert1)
-        ret = reduce(DataFrame.unionAll, [realize_return, realized_return, holding])
+        ret = reduce(DataFrame.unionAll, [realize_return, realized_return, holding, turnover])
         ret[self.date_name] = date
         ret = ret.drop('index')
         return ret
 
 
-def test_decompose():
+if __name__ == '__main__':
     conf = ConfData()
-    dates = conf.get_dates(target='edw.T_CUST_D_STK_TRD_IDX', source='edw.T_EVT_SEC_DLV_JOUR',
-                           dt='biz_dt', if_source=True)
+    dates = conf.get_dates(last_date='20170101')
     assert_cols = ['fund', 'code', 'hold_type', 'date', 'time', 'price', 'volume', 'close']
     assert_schema = StructType([SCHEMA[i] for i in assert_cols])
-    # trading_assert = spark.createDataFrame(spark.sparkContext.emptyRDD(), assert_schema)
-    trading_assert = pyspark.read.parquet('../data/trading_assert.parquet')
-    k = 0
-    time1 = time()
-    funds0 = []
+    trading_assert = spark.createDataFrame(spark.sparkContext.emptyRDD(), assert_schema)
+    data_source = 'local'
+    # 每天定时任务把数据都读取到本地feather文件中，feather类似于parquet文件是pandas开发的存储文件，如果每天跑增量，则不需要跑定时任务存历史数据
+    if data_source == 'local':
+        close_all = feather.read_dataframe('../data/stock_close.feather')
+        close_all = spark.createDataFrame(close_all)
+    elif data_source == 'database':
+        close_all = conf.get_stock_close(dates)
+        close_all.to_parquet('../data/stock_close.parquet')
     trading_columns = ['fund', 'code', 'flag', 'date', 'time', 'price', 'volume', 'close']
-    for date in dates:
-        logging.info(date)
-        time2 = time()
-        stock_close = conf.get_stock_close([date]).dropDuplicates(subset=['date', 'code'])
-        trading = conf.get_day_tradings(date)
+    for date in dates[1002:]:
+        print(date)
+        stock_close = close_all.filter(close_all['date'] == date).drop_duplicates(subset=['code'])
+        trading = []
+        for path in glob('../data/*.feather'):
+            if path.split('/')[-1].split('.')[0] == 'stock_close':
+                continue
+            trading_ = feather.read_dataframe(path)
+            trading_['fund'] = path.split('/')[-1].split('.')[0]
+            trading.append(trading_[trading_['date'] == date])
+        trading = pd.concat(trading)
+        if len(trading) == 0:
+            continue
+        trading = spark.createDataFrame(trading)
         stc = StockCost(stock_close, trading, trading_assert)
-        ret_old = stc.deal_decompose(date)
-        columns = stc.isin_list(ret_old.columns, stc.realized_nm + stc.realize_nm + stc.hold_nm + stc.turn_nm)
-        ret_old[columns] = ret_old[columns].fillna(0)
-        trading_assert = stc.trading_assert.copy()
-        ret_old['ind'] = None
-        ret_old.to_parquet('./trd_idx/{}.parquet'.format(date))
-        funds1 = ret_old[ret_old.columns[0]].unique()
-        funds = list(funds1[~np.isin(funds1, funds0)])
-        funds0 = funds1
-        logging.info(
-            """date: {date}, time: {time}, close: {stock_num}, trd: {trd_num}, hld: {hld_num},
-            trd_idx: {trd_idx_num}, k: {for_loop_num}, new_funds: {new_funds}""".format(
-                date=date, time=round(time2 - time1, 4), stock_num=len(stock_close), trd_num=len(trading),
-                hld_num=len(trading_assert), trd_idx_num=len(ret_old), for_loop_num=k, new_funds=str(funds)
-            )
-        )
-        time1 = time2
-        k += 1
-    trading_assert.to_parquet('../data/trading_assert.parquet')
+        day_deal = stc.trading.join(stc.stock_close, on=[stc.date_name, stc.code_name], how='outer')[trading_columns]
+        print('gx: ', day_deal)
+        gx_ret, day_deal = stc.update_gx_data(day_deal)
+        print('rn: ', day_deal)
+        rn_ret, day_trading = stc.update_rn_data(day_deal)
+    #     ret_old = stc.deal_decompose(date)
+    #
+    #
+    #
+    # for date in dates:
+    #     time2 = time()
+    #     stock_close = conf.get_stock_close([date]).drop_duplicates(subset=['date', 'code'])
+    #     trading = conf.get_day_tradings(date)
+    #     sc = StockCost(stock_close, trading, trading_assert)
+    #     ret_old = sc.deal_decompose(date)
+    #     columns = sc.isin_list(ret_old.columns, sc.realized_nm + sc.realize_nm + sc.hold_nm + sc.turn_nm)
+    #     ret_old[columns] = ret_old[columns].fillna(0)
+    #     trading_assert = sc.trading_assert.copy()
+    #     ret_old['ind'] = None
+    #     ret_old.to_parquet('./trd_idx/{}.parquet'.format(date))
+    #     funds1 = ret_old[ret_old.columns[0]].unique()
+    #     funds = list(funds1[~np.isin(funds1, funds0)])
+    #     funds0 = funds1
+    #     print('date:',date,',time:',round(time2-time1, 4),',close:',len(stock_close),',trd:',len(trading),',hld:',len(trading_assert),',trd_idx:',len(ret_old),',k:',k,',funds:',str(funds))
+    #     time1 = time2
+    #     k += 1

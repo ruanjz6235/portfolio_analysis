@@ -1,11 +1,8 @@
-import pandas as pd
+
 import numpy as np
-import scipy
 
 from ..config import ConfData
-from ..data_transform import DataTransform
-from ..util import (BaseSelect,
-                    BaseProcess)
+from ..util import ( BaseProcess)
 
 
 class RegressProcess(BaseProcess):
@@ -32,4 +29,4 @@ class RegressProcess(BaseProcess):
                     (['tm_excess'], lambda y: np.apply_along_axis(lambda x: max(x, 0), 0, y), 'hm_excess2')]]
         df = cls.interpolation(df, method=method, **kwargs)
         params = cls.rolling_model(func, df, x_funcs, freq, window, dt_type, cal_type)
-        return params
+        ConfData.save(params, 'zhijunfund.tm_hm_model')

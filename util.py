@@ -1,8 +1,10 @@
 import pandas as pd
 import numpy as np
-from functools import reduce
+from functools import lru_cache, reduce, wraps
+from copy import deepcopy
 
 from .config import ConfData
+from .const import nc
 
 
 def time_decorator(func):
@@ -17,12 +19,26 @@ def time_decorator(func):
     return timer
 
 
+def groupby_wrapper(groupby_name):
+
+    def groupby_func(func):
+        def new_func(df, **kwargs):
+            return df.groupby(groupby_name).apply(func, **kwargs)
+
+        return new_func
+
+    return groupby_func
+
+
 class BaseSelect(ConfData):
     # cronjob
     @classmethod
     def get_dates(cls, **kwargs):
-        zjfund = cls.get_conn('zhijunfund')
         last_date = kwargs.get('last_date')
+        today = pd.to_datetime('today').normalize()
+        if not kwargs.get('if_source'):
+            return np.array([int(x.strftime('%Y%m%d')) for x in pd.date_range(last_date, today)])
+        zjfund = cls.get_conn('zhijunfund')
         tar_con, sou_con = kwargs.get('tar_con', zjfund), kwargs.get('sou_con', zjfund)
         target, source = kwargs.get('target', 'T_CUST_D_STK_TRD_IDX'), kwargs.get('source', 'T_EVT_SEC_DLV_JOUR')
         date_name = kwargs.get('dt', 'etl_date')
@@ -35,19 +51,17 @@ class BaseSelect(ConfData):
                 last_date = '20150101'
             else:
                 last_date = str(int(last_date))
-        if kwargs.get('if_source', None):
-            query = f"""select distinct {sou_dt} from {source} where {sou_dt} >= {last_date} order by {sou_dt} asc"""
-            dates = pd.read_sql(query, sou_con)[sou_dt].astype('int').tolist()
-        else:
-            dates = [int(x.strftime('%Y%m%d')) for x in pd.date_range(last_date, pd.to_datetime('today').normalize())]
+        query = f"""select distinct {sou_dt} from {source} where {sou_dt} >= {last_date} order by {sou_dt} asc"""
+        dates = pd.read_sql(query, sou_con)[sou_dt].astype('int').values
         return dates
 
+    @classmethod
     # select data from table partitioned by date
-    def get_days_data(self, dates, query, schema, **kwargs):
+    def get_days_data(cls, dates, query, schema, **kwargs):
         days_data = []
         for date in dates:
             print(date)
-            day_data = pd.read_sql(query.format(date=date, **kwargs), self.get_conn(schema))
+            day_data = pd.read_sql(query.format(date=date, **kwargs), cls.get_conn(schema))
             days_data.append(day_data)
         days_data = pd.concat(days_data)
         return days_data
@@ -67,14 +81,16 @@ class BaseSelect(ConfData):
             kwargs.pop('dates')
             return cls.get_days_data(dates, query, schema, **kwargs)
 
-    def complete_df(self, df, **kwargs):
+    @classmethod
+    def complete_df(cls, df, **kwargs):
         # qs是一个对象，columns=['query', 'conn', 'merge_on', 'merge_how']
         qs = kwargs.get('query')
         for query in qs:
-            conn = self.get_conn(query.get('conn', 'zhijunfund'))
+            conn = cls.get_conn(query.get('conn', 'zhijunfund'))
             merge_on = query.get('merge_on', ['src_cust_no'])
             merge_how = query.get('merge_how', 'outer')
-            data = pd.read_sql(query['query'], conn)
+            cols = query.get('cols', {})
+            data = pd.read_sql(query['query'], conn).rename(columns=cols)
             columns = data.columns
             df = df.merge(data, on=merge_on, how=merge_how)
             df[columns] = df[columns].ffill().bfill()
@@ -171,6 +187,33 @@ class ExampleSelect(BaseSelect):
 
 class BaseProcess:
     @classmethod
+    def get_groups(cls, array, k):
+        y, r = len(array) // k, len(array) % k
+        array_group = list(array[: len(array) - r].reshape(y, k))
+        if r != 0:
+            array_group.append(array[len(array) - r:])
+        return array_group
+
+    @classmethod
+    def shift_array(cls, array: np.array, k: int, axis=0):
+        if axis != 0:
+            array = array.T
+
+        len_array = len(array)
+        new_array = array[max(0, k): len_array + min(0, k)]
+        mask = deepcopy(array)
+        mask.fill(np.nan)
+
+        if k > 0:
+            new_array = np.concatenate([mask[abs(k)], new_array])
+        else:
+            new_array = np.concatenate([new_array, mask[abs(k)]])
+
+        if axis != 0:
+            new_array = new_array.T
+        return new_array
+
+    @classmethod
     def model_data(cls,
                    data,
                    x_func=[(['000300'], lambda x: x-0.03/12, ['excess']),
@@ -205,7 +248,7 @@ class BaseProcess:
         elif freq.lower() == 'm':
             calendar = date[:6]
         elif freq.lower() == 'q':
-            calendar = date[:4] + '0' + str((int(date[4:6]) -1) // 3 + 1)
+            calendar = date[:4] + '0' + str((int(date[4:6]) - 1) // 3 + 1)
         elif freq.lower() == 'y':
             calendar = date[:4]
         else:
@@ -215,10 +258,16 @@ class BaseProcess:
     @classmethod
     def interpolation(cls, df, method={'method': 'linear'}, **kwargs):
         # interpolate
-        try:
-            df = df.interpolate(**method)
-        except KeyError:
-            df = method['method'](df, **kwargs)
+        if type(method) == str:
+            try:
+                df = df.interpolate(**method)
+            except KeyError:
+                raise KeyError('this method is not in df.interpolation')
+        else:
+            try:
+                df = method['method'](df, **kwargs)
+            except TypeError:
+                raise TypeError("custom variable 'method' is not callable")
         return df
 
     @classmethod
@@ -264,9 +313,12 @@ class BaseProcess:
                     sub_x = x[i: i + window]
                     param = func(sub_y, sub_x)
                     params.append([calendar] + param)
+                params = pd.DataFrame(params)
             else:
                 df_window = cls.rolling_window(pd.DataFrame(df).values, window)
                 params = np.apply_along_axis(func, 1, df_window)
+                params = pd.DataFrame(params)
+                params['calendar'] = calendars
         return pd.DataFrame(params)
 
     @classmethod
